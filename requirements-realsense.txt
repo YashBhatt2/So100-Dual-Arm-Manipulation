@@ -1,0 +1,6 @@
+# Optional RealSense camera bindings, separate from the base development setup.
+# On a supported Linux/Windows camera host, from the repository root:
+#   python -m pip install -r requirements.txt -r requirements-realsense.txt
+# Also requires compatible camera hardware and SDK/USB drivers.
+# Official PyPI wheels do not cover macOS; that requires a separate SDK build.
+pyrealsense2>=2.55,<3

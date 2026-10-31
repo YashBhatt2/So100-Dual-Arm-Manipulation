@@ -1,0 +1,24 @@
+# Use Python 3.12 for the pinned robotics dependency stack.
+# Run from the repository root:
+#   python -m pip install -r requirements.txt
+# Use the bundled LeRobot source and its declared dependency constraints.
+-e ./lerobot[feetech,kinematics,pygame-dep]
+
+# Direct dependencies of teleop/ and camera-independent vision code.
+numpy>=2.0.0,<2.3.0
+pygame>=2.5.1
+
+# LeRobot installs opencv-python-headless>=4.9.0,<4.14.0 transitively.
+# Modern OpenCV includes the ArUco APIs used by vision/aruco_realsense.py.
+# That script also uses imshow, which requires the GUI build. Do not install
+# multiple OpenCV distributions together: they share the cv2 namespace.
+# For desktop vision, AFTER installing this file, replace the headless wheel:
+#   python -m pip uninstall -y opencv-python-headless
+#   python -m pip install 'opencv-python>=4.9.0,<4.14.0'
+# This intentional replacement may be flagged by pip check because LeRobot
+# explicitly declares the headless distribution. Reapply after dependency sync.
+# Optional RealSense camera support: requirements-realsense.txt.
+# Official pyrealsense2 wheels are not published for macOS; omit on this Mac.
+
+# Privileged-state cube-lifting simulation has its own lightweight environment.
+# See sim/README.md and sim/requirements.txt; LeRobot is not needed for simulation.

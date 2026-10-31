@@ -1,3 +1,11 @@
+# SO-100 manipulation
+
+The current experiment is **single-arm cube lifting from privileged MuJoCo state**.
+See [the simulation guide](sim/README.md) for setup, a scripted grasp check, PPO training, and evaluation.
+Camera-based perception, domain randomization, and hardware transfer are later stages.
+
+## Original research notes
+
 Lets figure ts out
 Here is the deal, this project is Messing around with the So100 for ARC and Abhishek Sarkar, but from the inside it has these timelines:
 	By End of this Semester: Both the physical Arms are fixed, implement Normal Single arm manipulation on both those arms, and have a solid implementable plan for dual arm manipulation(which shall be discussed in this doc as well later… )
