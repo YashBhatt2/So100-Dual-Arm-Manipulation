@@ -3,3 +3,5 @@ mujoco>=3.3,<4
 gymnasium>=1.1,<2
 stable-baselines3>=2.6,<3
 numpy>=2,<2.3
+tensorboard>=2.14,<3
+wandb>=0.19,<1

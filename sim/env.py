@@ -9,6 +9,34 @@ import numpy as np
 
 MODEL = Path(__file__).parent / "models" / "so100" / "so_arm100.xml"
 
+# Reward settings: named here so the logic and values are easy to inspect and tune.
+REWARD_DISCOUNT = 0.99  # Keep equal to the PPO gamma used during training.
+APPROACH_WEIGHT = 1.0
+APPROACH_SENSITIVITY = 20.0  # How quickly the approach score rises near the cube.
+GRASP_WEIGHT = 1.0  # Reward potential only counts when both jaws touch the cube.
+LIFT_WEIGHT = 4.0  # Additional potential for lifting, enabled only for a valid grasp.
+LIFT_TARGET_METERS = 0.06
+SUCCESS_BONUS = 10.0
+FAILURE_PENALTY = 2.0
+STEP_COST = 0.01
+ACTION_COST_WEIGHT = 0.001
+HOLD_STEPS_REQUIRED = 13  # 13 x 0.04 s = 0.52 s.
+CUBE_REST_HEIGHT_METERS = 0.01
+
+REWARD_CONFIG = {
+    "discount": REWARD_DISCOUNT,
+    "approach_weight": APPROACH_WEIGHT,
+    "approach_sensitivity": APPROACH_SENSITIVITY,
+    "grasp_weight": GRASP_WEIGHT,
+    "lift_weight": LIFT_WEIGHT,
+    "lift_target_meters": LIFT_TARGET_METERS,
+    "success_bonus": SUCCESS_BONUS,
+    "failure_penalty": FAILURE_PENALTY,
+    "step_cost": STEP_COST,
+    "action_cost_weight": ACTION_COST_WEIGHT,
+    "hold_steps_required": HOLD_STEPS_REQUIRED,
+}
+
 
 def make_model():
     root = ET.parse(MODEL).getroot()
@@ -97,11 +125,32 @@ class CubeLiftEnv(gym.Env):
                     sides.add(int(body))
         return len(sides) == 2
 
-    def _potential(self):
-        distance = float(np.linalg.norm(self.cube_pos - self.tip))
-        grasped = self._contacts()
-        lift = np.clip((self.cube_pos[2] - 0.01) / 0.06, 0, 1)
-        return float(1 - np.tanh(20 * distance) + grasped * (1 + 4 * lift))
+    def _potential_terms(self):
+        """Return the readable components that shape progress toward cube lifting."""
+        distance_m = float(np.linalg.norm(self.cube_pos - self.tip))
+        approach = APPROACH_WEIGHT * (1 - np.tanh(APPROACH_SENSITIVITY * distance_m))
+        both_jaws_touching = self._contacts()
+        grasp = GRASP_WEIGHT * float(both_jaws_touching)
+        lift_fraction = float(np.clip(
+            (self.cube_pos[2] - CUBE_REST_HEIGHT_METERS) / LIFT_TARGET_METERS, 0, 1
+        ))
+        # Lift gets credit only while BOTH jaw bodies physically contact the cube.
+        lift = LIFT_WEIGHT * lift_fraction * float(both_jaws_touching)
+        return {"approach": approach, "grasp": grasp, "lift": lift}
+
+    def _reward(self, previous_terms, next_terms, success, failed, action):
+        """Calculate and name every per-step reward term; values sum to PPO's reward."""
+        terms = {
+            "approach_progress": REWARD_DISCOUNT * next_terms["approach"] - previous_terms["approach"],
+            "grasp_progress": REWARD_DISCOUNT * next_terms["grasp"] - previous_terms["grasp"],
+            "lift_progress": REWARD_DISCOUNT * next_terms["lift"] - previous_terms["lift"],
+            "success_bonus": SUCCESS_BONUS * float(success),
+            "failure_penalty": -FAILURE_PENALTY * float(failed),
+            "time_cost": -STEP_COST,
+            "movement_cost": -ACTION_COST_WEIGHT * float(np.square(action[:3]).sum()),
+        }
+        terms["total"] = sum(terms.values())
+        return terms
 
     def _obs(self):
         velocity = np.zeros(6)
@@ -136,7 +185,7 @@ class CubeLiftEnv(gym.Env):
         if action.shape != (4,) or not np.isfinite(action).all():
             raise ValueError("Expected four finite action values")
         action = np.clip(action, -1, 1)
-        previous_potential = self._potential()
+        previous_terms = self._potential_terms()
         target = np.clip(self.tip + action[:3] * 0.10 * self.dt,
                          [-0.14, -0.32, 0.012], [0.14, -0.12, 0.25])
         q = self.solve_ik(target, self.data.qpos)
@@ -148,20 +197,22 @@ class CubeLiftEnv(gym.Env):
         self.steps += 1
         grasped = self._contacts()
         lift = float(self.cube_pos[2] - 0.01)
-        self.hold_steps = self.hold_steps + 1 if grasped and lift >= 0.06 else 0
-        success = self.hold_steps >= 13
-        distance = float(np.linalg.norm(self.cube_pos - self.tip))
+        self.hold_steps = self.hold_steps + 1 if grasped and lift >= LIFT_TARGET_METERS else 0
+        success = self.hold_steps >= HOLD_STEPS_REQUIRED
         failed = bool(np.linalg.norm(self.cube_pos[:2]) > 0.5 or self.cube_pos[2] < -0.02)
         terminated = bool(success or failed)
         truncated = bool(self.steps >= self.max_steps and not terminated)
-        # Potential-based shaping rewards progress without paying indefinitely for hovering.
-        # Keep this discount equal to PPO's gamma (0.99).
-        next_potential = 0.0 if terminated else self._potential()
-        reward = 0.99 * next_potential - previous_potential + 10 * success - 2 * failed
-        reward -= 0.01 + 0.001 * float(np.square(action[:3]).sum())
+        # At a terminal step, the next potential is zero; success/failure is explicit below.
+        next_terms = (
+            {"approach": 0.0, "grasp": 0.0, "lift": 0.0}
+            if terminated else self._potential_terms()
+        )
+        reward_terms = self._reward(previous_terms, next_terms, success, failed, action)
+        reward = reward_terms["total"]
         self._done = terminated or truncated
         info = {"is_success": bool(success), "grasped": grasped, "lift_height": lift,
-                "tip_distance": distance, "hold_steps": self.hold_steps}
+                "tip_distance": distance, "hold_steps": self.hold_steps,
+                "reward_components": reward_terms}
         if self.render_mode == "human":
             self.render()
         return self._obs(), float(reward), terminated, truncated, info
