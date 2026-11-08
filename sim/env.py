@@ -199,6 +199,7 @@ class CubeLiftEnv(gym.Env):
         lift = float(self.cube_pos[2] - 0.01)
         self.hold_steps = self.hold_steps + 1 if grasped and lift >= LIFT_TARGET_METERS else 0
         success = self.hold_steps >= HOLD_STEPS_REQUIRED
+        distance = float(np.linalg.norm(self.cube_pos - self.tip))
         failed = bool(np.linalg.norm(self.cube_pos[:2]) > 0.5 or self.cube_pos[2] < -0.02)
         terminated = bool(success or failed)
         truncated = bool(self.steps >= self.max_steps and not terminated)
