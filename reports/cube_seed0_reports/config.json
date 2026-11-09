@@ -1,0 +1,36 @@
+{
+  "steps": 1000000,
+  "seed": 0,
+  "envs": 4,
+  "rollout": 1024,
+  "start": "near",
+  "device": "cpu",
+  "out": "runs/cube_seed0",
+  "resume": null,
+  "wandb_project": "so100-cube-lift",
+  "wandb_entity": null,
+  "versions": {
+    "mujoco": "3.17.0",
+    "gymnasium": "1.4.0",
+    "stable-baselines3": "2.9.2",
+    "torch": "2.15.0",
+    "numpy": "2.5.4"
+  },
+  "model_sha256": "1901fe7e86d2458e2011390bf52014c1f6f4fcea79abef1788b3108ea9781955",
+  "environment_sha256": "3d017817b100ef9c54e9b3622856890b16649ecb6bf9dea9f7fb1ee12ba8f30b",
+  "observation": "privileged simulator state; see sim/README.md",
+  "reward": {
+    "discount": 0.99,
+    "approach_weight": 1.0,
+    "approach_sensitivity": 20.0,
+    "grasp_weight": 1.0,
+    "lift_weight": 4.0,
+    "lift_target_meters": 0.06,
+    "success_bonus": 10.0,
+    "failure_penalty": 2.0,
+    "step_cost": 0.01,
+    "action_cost_weight": 0.001,
+    "hold_steps_required": 13
+  },
+  "wandb_run_url": "https://forge.coreweave.com/wandb/skilfulangle/so100-cube-lift/runs/6e53q8om"
+}
