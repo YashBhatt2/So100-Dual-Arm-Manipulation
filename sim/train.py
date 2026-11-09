@@ -49,7 +49,7 @@ def main():
     parser.add_argument("--envs", type=int, default=4)
     parser.add_argument("--rollout", type=int, default=1024)
     parser.add_argument("--start", choices=["near", "home"], default="near")
-    parser.add_argument("--device", choices=["cpu", "cuda", "mps"], default="cpu")
+    parser.add_argument("--device", choices=["cpu", "cuda", "mps"], default="cuda")
     parser.add_argument("--out", type=Path, default=Path("runs/cube_lift"))
     parser.add_argument("--resume", type=Path, help="PPO checkpoint to continue; use a new output directory")
     parser.add_argument("--wandb-project", default="so100-cube-lift")
