@@ -10,11 +10,10 @@ import numpy as np
 MODEL = Path(__file__).parent / "models" / "so100" / "so_arm100.xml"
 
 # Reward settings: named here so the logic and values are easy to inspect and tune.
-REWARD_DISCOUNT = 0.99  # Keep equal to the PPO gamma used during training.
-APPROACH_WEIGHT = 1.0
-APPROACH_SENSITIVITY = 20.0  # How quickly the approach score rises near the cube.
-GRASP_WEIGHT = 1.0  # Reward potential only counts when both jaws touch the cube.
-LIFT_WEIGHT = 4.0  # Additional potential for lifting, enabled only for a valid grasp.
+REWARD_DISCOUNT = 0.99  # PPO discounts future rewards by this factor.
+APPROACH_PROGRESS_WEIGHT = 20.0  # Reward each metre of reduced cube-to-gripper distance.
+GRASP_BONUS = 1.0  # One-time bonus when BOTH jaw bodies make contact.
+LIFT_PROGRESS_WEIGHT = 2.0  # Total progress reward for a valid 6 cm lift.
 LIFT_TARGET_METERS = 0.06
 SUCCESS_BONUS = 10.0
 FAILURE_PENALTY = 2.0
@@ -25,10 +24,9 @@ CUBE_REST_HEIGHT_METERS = 0.01
 
 REWARD_CONFIG = {
     "discount": REWARD_DISCOUNT,
-    "approach_weight": APPROACH_WEIGHT,
-    "approach_sensitivity": APPROACH_SENSITIVITY,
-    "grasp_weight": GRASP_WEIGHT,
-    "lift_weight": LIFT_WEIGHT,
+    "approach_progress_weight_per_meter": APPROACH_PROGRESS_WEIGHT,
+    "grasp_bonus": GRASP_BONUS,
+    "lift_progress_weight": LIFT_PROGRESS_WEIGHT,
     "lift_target_meters": LIFT_TARGET_METERS,
     "success_bonus": SUCCESS_BONUS,
     "failure_penalty": FAILURE_PENALTY,
@@ -125,25 +123,32 @@ class CubeLiftEnv(gym.Env):
                     sides.add(int(body))
         return len(sides) == 2
 
-    def _potential_terms(self):
-        """Return the readable components that shape progress toward cube lifting."""
+    def _reward_state(self):
+        """Measure state for dense, directly interpretable step-by-step rewards."""
         distance_m = float(np.linalg.norm(self.cube_pos - self.tip))
-        approach = APPROACH_WEIGHT * (1 - np.tanh(APPROACH_SENSITIVITY * distance_m))
-        both_jaws_touching = self._contacts()
-        grasp = GRASP_WEIGHT * float(both_jaws_touching)
-        lift_fraction = float(np.clip(
-            (self.cube_pos[2] - CUBE_REST_HEIGHT_METERS) / LIFT_TARGET_METERS, 0, 1
-        ))
-        # Lift gets credit only while BOTH jaw bodies physically contact the cube.
-        lift = LIFT_WEIGHT * lift_fraction * float(both_jaws_touching)
-        return {"approach": approach, "grasp": grasp, "lift": lift}
+        return {
+            "distance_m": distance_m,
+            "both_jaws_touching": self._contacts(),
+            "lift_fraction": float(np.clip(
+                (self.cube_pos[2] - CUBE_REST_HEIGHT_METERS) / LIFT_TARGET_METERS, 0, 1
+            )),
+        }
 
-    def _reward(self, previous_terms, next_terms, success, failed, action):
-        """Calculate and name every per-step reward term; values sum to PPO's reward."""
+    def _reward(self, previous, current, success, failed, action):
+        """Reward actual per-step approach, first valid grasp, and grasped lifting."""
+        reduced_distance_m = previous["distance_m"] - current["distance_m"]
+        first_two_jaw_contact = (
+            current["both_jaws_touching"] and not previous["both_jaws_touching"]
+        )
+        lift_fraction_gain = max(0.0, current["lift_fraction"] - previous["lift_fraction"])
         terms = {
-            "approach_progress": REWARD_DISCOUNT * next_terms["approach"] - previous_terms["approach"],
-            "grasp_progress": REWARD_DISCOUNT * next_terms["grasp"] - previous_terms["grasp"],
-            "lift_progress": REWARD_DISCOUNT * next_terms["lift"] - previous_terms["lift"],
+            # Positive when this action moves the cube closer to the gripper; negative if farther.
+            "approach_progress": APPROACH_PROGRESS_WEIGHT * reduced_distance_m,
+            # Paid once when the cube starts touching both jaw bodies.
+            "grasp_bonus": GRASP_BONUS * float(first_two_jaw_contact),
+            # Reward upward progress only while both jaws are in contact; max total is 2.0.
+            "lift_progress": LIFT_PROGRESS_WEIGHT * lift_fraction_gain
+            * float(current["both_jaws_touching"]),
             "success_bonus": SUCCESS_BONUS * float(success),
             "failure_penalty": -FAILURE_PENALTY * float(failed),
             "time_cost": -STEP_COST,
@@ -185,7 +190,7 @@ class CubeLiftEnv(gym.Env):
         if action.shape != (4,) or not np.isfinite(action).all():
             raise ValueError("Expected four finite action values")
         action = np.clip(action, -1, 1)
-        previous_terms = self._potential_terms()
+        previous_reward_state = self._reward_state()
         target = np.clip(self.tip + action[:3] * 0.10 * self.dt,
                          [-0.14, -0.32, 0.012], [0.14, -0.12, 0.25])
         q = self.solve_ik(target, self.data.qpos)
@@ -203,12 +208,10 @@ class CubeLiftEnv(gym.Env):
         failed = bool(np.linalg.norm(self.cube_pos[:2]) > 0.5 or self.cube_pos[2] < -0.02)
         terminated = bool(success or failed)
         truncated = bool(self.steps >= self.max_steps and not terminated)
-        # At a terminal step, the next potential is zero; success/failure is explicit below.
-        next_terms = (
-            {"approach": 0.0, "grasp": 0.0, "lift": 0.0}
-            if terminated else self._potential_terms()
+        current_reward_state = self._reward_state()
+        reward_terms = self._reward(
+            previous_reward_state, current_reward_state, success, failed, action
         )
-        reward_terms = self._reward(previous_terms, next_terms, success, failed, action)
         reward = reward_terms["total"]
         self._done = terminated or truncated
         info = {"is_success": bool(success), "grasped": grasped, "lift_height": lift,
